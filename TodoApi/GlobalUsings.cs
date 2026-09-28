@@ -1,0 +1,13 @@
+global using System.Diagnostics;
+global using System.Text.Json.Serialization;
+global using FluentValidation;
+global using Microsoft.AspNetCore.Diagnostics;
+global using Microsoft.AspNetCore.Mvc;
+global using Microsoft.AspNetCore.Mvc.Filters;
+global using Microsoft.EntityFrameworkCore;
+global using Microsoft.Extensions.Options;
+global using TodoApi.Data;
+global using TodoApi.Dtos;
+global using TodoApi.Infrastructure;
+global using TodoApi.Models;
+global using TodoApi.Validators;

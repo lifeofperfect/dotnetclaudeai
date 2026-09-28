@@ -1,0 +1,48 @@
+@TodoApi_HostAddress = http://localhost:5010
+
+### List all todos
+GET {{TodoApi_HostAddress}}/api/todos
+
+### Filter by status and priority, sort by priority (highest first)
+GET {{TodoApi_HostAddress}}/api/todos?status=Todo&priority=High&sortBy=priority&descending=true
+
+### Get one
+GET {{TodoApi_HostAddress}}/api/todos/1
+
+### Create
+POST {{TodoApi_HostAddress}}/api/todos
+Content-Type: application/json
+
+{
+  "title": "Write quarterly report",
+  "description": "Include Q3 numbers",
+  "priority": "High",
+  "dueDate": "2026-10-15T17:00:00Z"
+}
+
+### Full update
+PUT {{TodoApi_HostAddress}}/api/todos/1
+Content-Type: application/json
+
+{
+  "title": "Write quarterly report",
+  "description": "Include Q3 numbers and forecast",
+  "status": "InProgress",
+  "priority": "Critical",
+  "dueDate": "2026-10-10T17:00:00Z"
+}
+
+### Change status only
+PATCH {{TodoApi_HostAddress}}/api/todos/1/status
+Content-Type: application/json
+
+{ "status": "Done" }
+
+### Change priority only
+PATCH {{TodoApi_HostAddress}}/api/todos/1/priority
+Content-Type: application/json
+
+{ "priority": "Low" }
+
+### Delete
+DELETE {{TodoApi_HostAddress}}/api/todos/1

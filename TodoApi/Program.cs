@@ -23,6 +23,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 
 var app = builder.Build();
 
+app.UseAIAgentHeader();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 

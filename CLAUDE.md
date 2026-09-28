@@ -33,7 +33,8 @@ Single ASP.NET Core Web API project (`TodoApi`, `net10.0`) using controllers, no
 
 A write request (e.g. `POST /api/todos`) passes through these stages in order; each can end the request with a ProblemDetails response:
 
-1. **`UseExceptionHandler()`** — first middleware; wraps everything below. Unhandled exceptions → `Infrastructure/GlobalExceptionHandler`.
+0. **`UseAIAgentHeader()`** (`Infrastructure/AIAgentHeaderMiddleware`) — outermost middleware; adds `AIAgent: claudecode` to every response. It sets the header in a `Response.OnStarting` callback on purpose: `UseExceptionHandler` clears headers before writing error responses, so setting it directly would drop it from 500s.
+1. **`UseExceptionHandler()`** — wraps everything below it. Unhandled exceptions → `Infrastructure/GlobalExceptionHandler`.
 2. **Routing** — no match → bare 404/405, converted to ProblemDetails by `UseStatusCodePages()`.
 3. **JSON binding** — malformed JSON or unknown enum *names* (`"Urgent"`) → 400 from `[ApiController]`'s automatic model-state check. Validators never see these.
 4. **`Infrastructure/FluentValidationFilter`** (global MVC filter) — runs `IValidator<T>` for each action argument → 400 on failure.

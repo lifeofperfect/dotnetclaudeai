@@ -82,8 +82,20 @@ app.UseRateLimiter(); // after authentication, so limits are per user where poss
 app.UseAuthorization();
 
 app.MapGroup("/api/auth")
-    .MapIdentityApi<AppUser>()
-    .RequireRateLimiting(RateLimitingOptions.AuthPolicy);
+    .RequireRateLimiting(RateLimitingOptions.AuthPolicy)
+    // Only the bearer scheme is registered; cookie login would throw (500), so reject it up front.
+    .AddEndpointFilter(async (ctx, next) =>
+    {
+        var query = ctx.HttpContext.Request.Query;
+        var wantsCookies = (bool.TryParse(query["useCookies"], out var c) && c)
+            || (bool.TryParse(query["useSessionCookies"], out var s) && s);
+        return wantsCookies
+            ? TypedResults.Problem(statusCode: StatusCodes.Status400BadRequest,
+                title: "Cookie authentication is not supported",
+                detail: "Use the bearer access token returned by /api/auth/login.")
+            : await next(ctx);
+    })
+    .MapIdentityApi<AppUser>();
 
 app.MapControllers().RequireAuthorization();
 

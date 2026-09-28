@@ -1,48 +1,86 @@
 @TodoApi_HostAddress = http://localhost:5010
 
-### List all todos
-GET {{TodoApi_HostAddress}}/api/todos
+### Log in as the Development demo user (seeded in Development only)
+# @name login
+POST {{TodoApi_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "demo@example.com", "password": "Demo-Passw0rd!" }
+
+###
+@token = {{login.response.body.accessToken}}
+
+### Register a new account (password: 12+ chars, upper, lower, digit, symbol)
+POST {{TodoApi_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{ "email": "you@example.com", "password": "Your-Str0ng-Pass!" }
+
+### Refresh an expired access token
+POST {{TodoApi_HostAddress}}/api/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{login.response.body.refreshToken}}" }
+
+### List todos (paged: page >= 1, pageSize 1-100, default 20)
+GET {{TodoApi_HostAddress}}/api/todos?page=1&pageSize=20
+Authorization: Bearer {{token}}
 
 ### Filter by status and priority, sort by priority (highest first)
 GET {{TodoApi_HostAddress}}/api/todos?status=Todo&priority=High&sortBy=priority&descending=true
+Authorization: Bearer {{token}}
 
-### Get one
+### Get one (response carries the ETag needed for writes)
+# @name getOne
 GET {{TodoApi_HostAddress}}/api/todos/1
+Authorization: Bearer {{token}}
+
+###
+@etag = {{getOne.response.headers.ETag}}
 
 ### Create
 POST {{TodoApi_HostAddress}}/api/todos
+Authorization: Bearer {{token}}
 Content-Type: application/json
 
 {
   "title": "Write quarterly report",
   "description": "Include Q3 numbers",
   "priority": "High",
-  "dueDate": "2026-10-15T17:00:00Z"
+  "dueDate": "2027-01-15T17:00:00Z"
 }
 
-### Full update
+### Full update (If-Match required: 428 without it, 412 if stale)
 PUT {{TodoApi_HostAddress}}/api/todos/1
+Authorization: Bearer {{token}}
+If-Match: {{etag}}
 Content-Type: application/json
 
 {
-  "title": "Write quarterly report",
-  "description": "Include Q3 numbers and forecast",
+  "title": "Fix login bug on mobile",
+  "description": "Users on iOS get logged out after 5 minutes.",
   "status": "InProgress",
   "priority": "Critical",
   "dueDate": "2026-10-10T17:00:00Z"
 }
 
-### Change status only
+### Change status only (re-run "Get one" first: every write changes the ETag)
 PATCH {{TodoApi_HostAddress}}/api/todos/1/status
+Authorization: Bearer {{token}}
+If-Match: {{etag}}
 Content-Type: application/json
 
 { "status": "Done" }
 
 ### Change priority only
 PATCH {{TodoApi_HostAddress}}/api/todos/1/priority
+Authorization: Bearer {{token}}
+If-Match: {{etag}}
 Content-Type: application/json
 
 { "priority": "Low" }
 
-### Delete
+### Delete ("If-Match: *" skips the version check but is still required)
 DELETE {{TodoApi_HostAddress}}/api/todos/1
+Authorization: Bearer {{token}}
+If-Match: {{etag}}

@@ -9,8 +9,12 @@ public class GlobalExceptionHandler(
     {
         var (status, title) = exception switch
         {
+            // Kestrel limits (e.g. MaxRequestBodySize -> 413) surface as BadHttpRequestException during body reads.
+            BadHttpRequestException bad => (bad.StatusCode, bad.StatusCode == StatusCodes.Status413PayloadTooLarge
+                ? "Request body too large" : "Bad request"),
             KeyNotFoundException => (StatusCodes.Status404NotFound, "Resource not found"),
-            DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "The resource was modified by another request"),
+            // Same status as a failed If-Match check: the version changed between read and save.
+            DbUpdateConcurrencyException => (StatusCodes.Status412PreconditionFailed, "The resource was modified by another request"),
             DbUpdateException => (StatusCodes.Status409Conflict, "The change could not be saved"),
             OperationCanceledException when context.RequestAborted.IsCancellationRequested => (499, "Client closed request"),
             _ => (StatusCodes.Status500InternalServerError, "An unexpected error occurred"),

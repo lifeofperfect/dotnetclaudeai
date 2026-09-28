@@ -27,38 +27,54 @@ dotnet run --launch-profile https   # https://localhost:7001 + http://localhost:
 
 ## Architecture
 
-Single ASP.NET Core Web API project (`TodoApi`, `net10.0`) using controllers, not minimal APIs. Packages: `Microsoft.EntityFrameworkCore.InMemory`, `FluentValidation.DependencyInjectionExtensions`, `Microsoft.AspNetCore.OpenApi`.
+Single ASP.NET Core Web API project (`TodoApi`, `net10.0`) using controllers, not minimal APIs. Packages: `Microsoft.EntityFrameworkCore.InMemory`, `Microsoft.AspNetCore.Identity.EntityFrameworkCore`, `FluentValidation.DependencyInjectionExtensions`, `Microsoft.AspNetCore.OpenApi`.
 
 ### Request flow
 
-A write request (e.g. `POST /api/todos`) passes through these stages in order; each can end the request with a ProblemDetails response:
+A request passes through these stages in order (`Program.cs`); each can end it with a ProblemDetails response:
 
-0. **`UseAIAgentHeader()`** (`Infrastructure/AIAgentHeaderMiddleware`) — outermost middleware; adds `AIAgent: claudecode` to every response. It sets the header in a `Response.OnStarting` callback on purpose: `UseExceptionHandler` clears headers before writing error responses, so setting it directly would drop it from 500s.
-1. **`UseExceptionHandler()`** — wraps everything below it. Unhandled exceptions → `Infrastructure/GlobalExceptionHandler`.
-2. **Routing** — no match → bare 404/405, converted to ProblemDetails by `UseStatusCodePages()`.
-3. **JSON binding** — malformed JSON or unknown enum *names* (`"Urgent"`) → 400 from `[ApiController]`'s automatic model-state check. Validators never see these.
-4. **`Infrastructure/FluentValidationFilter`** (global MVC filter) — runs `IValidator<T>` for each action argument → 400 on failure.
-5. **`Controllers/TodosController`** — maps DTO → entity, applies domain logic, saves via `TodoDbContext`, returns `TodoResponse`.
+1. **Kestrel limits** — bodies over 64 KB (`MaxRequestBodySize`) fail while being read → 413 via `GlobalExceptionHandler`. `AddServerHeader = false` removes `Server: Kestrel`.
+2. **`UseAIAgentHeader()` / `UseSecurityHeaders()`** (`Infrastructure/`) — outermost; add `AIAgent: claudecode` plus nosniff, `X-Frame-Options`, CSP, `Referrer-Policy`, COOP and `Cache-Control: no-store` to every response. Both set headers in a `Response.OnStarting` callback on purpose: `UseExceptionHandler` clears headers before writing error responses, so setting them directly would drop them from 500s.
+3. **`UseExceptionHandler()`** — unhandled exceptions → `Infrastructure/GlobalExceptionHandler`. `UseStatusCodePages()` turns bare 401/404/405 into ProblemDetails.
+4. **`UseHsts()`** (non-Development only) and `UseHttpsRedirection()`.
+5. **`UseCors()`** — default policy; origins from `Cors:AllowedOrigins` (empty in `appsettings.json`, localhost:3000/5173 in Development). No credentials; exposes `ETag`, `Location`, `Retry-After`.
+6. **`UseAuthentication()`** — ASP.NET Core Identity **bearer tokens only** (`AddBearerToken`, no cookie scheme, so no CSRF surface). Tokens are opaque (Data Protection), not JWTs.
+7. **`UseRateLimiter()`** — after authentication so the global limiter partitions per user (`user:<id>`), falling back to `ip:<addr>` for anonymous calls. `/api/auth/*` also has the stricter per-IP `auth` policy. Limits come from the `RateLimiting` config section (`Infrastructure/RateLimiting.cs`). 429 responses carry `Retry-After`.
+8. **`UseAuthorization()`** — `MapControllers().RequireAuthorization()` makes every controller require a signed-in user; `/api/auth/*` (from `MapIdentityApi<AppUser>()`) handles its own auth.
+9. **JSON binding** — malformed JSON or unknown enum *names* (`"Urgent"`) → automatic 400. Outside Development, `AllowInputFormatterExceptionMessages = false` hides messages that name internal .NET types.
+10. **`Infrastructure/FluentValidationFilter`** (global MVC filter) — runs `IValidator<T>` for each action argument (including `[FromQuery] TodoListQuery`) → 400.
+11. **`Controllers/TodosController`**.
 
-All error bodies share one shape: `AddProblemDetails` in `Program.cs` stamps `instance` (`"POST /api/todos"`) and `traceId` on every one, including validation 400s.
+All error bodies share one shape: `AddProblemDetails` stamps `instance` (`"POST /api/todos"`) and `traceId` on every one.
 
 ### Layers
 
-- **`Models/`** — `TodoItem` entity plus `TodoStatus` (Todo, InProgress, Done, Cancelled) and `TodoPriority` (Low, Medium, High, Critical). Never returned from the API directly.
-- **`Dtos/`** — request/response records; `TodoResponse.From(entity)` is the only entity→response mapping. DTOs carry **no** validation attributes.
-- **`Validators/`** — FluentValidation validators, one per request DTO. Shared rules (`ValidTitle`, `ValidDescription`, `ValidEnum`) are extension methods on `TodoRules`, which also holds the length constants.
-- **`Data/`** — `TodoDbContext` (EF Core **InMemory**, db name `"Todos"`; all data is lost on restart) and `SeedData`, which inserts 10 sample todos only in Development and only when the table is empty. There is no repository/service layer: the controller uses `TodoDbContext` directly.
-- **`Infrastructure/`** — cross-cutting ASP.NET plumbing: the exception handler and the validation filter.
+- **`Models/`** — `AppUser : IdentityUser`, the `TodoItem` entity, and the `TodoStatus`/`TodoPriority` enums. Entities are never returned from the API directly.
+- **`Dtos/`** — request/response records, `TodoListQuery` (list query string) and `PagedResponse<T>`. `TodoResponse.From(entity)` is the only entity→response mapping. DTOs carry **no** validation attributes.
+- **`Validators/`** — FluentValidation validators, one per request DTO. Shared rules (`ValidTitle`, `ValidDescription`, `ValidEnum`) are extension methods on `TodoRules`, which also holds the length constants. `TodoListQueryValidator` holds the paging/search limits (pageSize ≤ 100, search ≤ 100 chars, allowed `sortBy` values).
+- **`Data/`** — `TodoDbContext : IdentityDbContext<AppUser>` (EF Core **InMemory**, db name `"Todos"`; users and todos are lost on restart) and `SeedData`, which in Development only creates `demo@example.com` / `Demo-Passw0rd!` owning 10 sample todos. No repository/service layer: the controller uses `TodoDbContext` directly.
+- **`Infrastructure/`** — cross-cutting plumbing: exception handler, validation filter, header middlewares, rate limiting setup.
 
 ### Conventions and invariants
 
 - **Usings**: all namespace imports live in `TodoApi/GlobalUsings.cs` (on top of the SDK's `ImplicitUsings`). Source files have no `using` directives — add new namespaces there instead of per file.
-- **Adding a request DTO**: write an `AbstractValidator<T>` in `Validators/` and it's picked up automatically (`AddValidatorsFromAssemblyContaining<Program>()` + the global filter). No per-action wiring. The deprecated `FluentValidation.AspNetCore` package is intentionally not used.
-- **Validation is FluentValidation only.** `SuppressImplicitRequiredAttributeForNonNullableReferenceTypes` is on, so MVC does not add its own "required" errors for non-nullable strings — a missing `Title` arrives as `null` and the validator must catch it. Don't reintroduce DataAnnotations on DTOs.
+- **Ownership**: every todo has an `OwnerId` (FK to `AppUser`). All controller queries go through `MyTodos`, which filters by the caller's `ClaimTypes.NameIdentifier`. Another user's todo returns **404, not 403**, so ids can't be probed. Never query `db.Todos` directly in the controller.
+- **Optimistic concurrency (required)**: `TodoItem.RowVersion` is an app-managed `Guid` concurrency token, regenerated in `TodoDbContext.SaveChanges[Async]` on every insert/update (portable across providers, unlike a SQL Server `rowversion`). It's exposed as the `ETag` header (`"<guid>"`, same format as `rowVersion` in the body). PUT/PATCH/DELETE go through `LoadForWriteAsync`: missing `If-Match` → 428, mismatch or weak ETag → 412, `If-Match: *` matches any version. A write racing between that check and `SaveChanges` throws `DbUpdateConcurrencyException` → also 412. Any new write endpoint must use `LoadForWriteAsync` and call `SetETag`.
+- **List endpoint is always paged** (`PagedResponse<T>`) and sorts with a `.ThenBy(t => t.Id)` tie-breaker so pages are stable. Keep the tie-breaker on any new sort.
+- **Adding a request DTO**: write an `AbstractValidator<T>` in `Validators/` and it's picked up automatically (`AddValidatorsFromAssemblyContaining<Program>()` + the global filter). The deprecated `FluentValidation.AspNetCore` package is intentionally not used.
+- **Validation is FluentValidation only.** `SuppressImplicitRequiredAttributeForNonNullableReferenceTypes` is on, so a missing `Title` arrives as `null` and the validator must catch it. Don't reintroduce DataAnnotations on DTOs.
 - **Create vs update rules differ on purpose**: `CreateTodoRequestValidator` requires `DueDate` in the future; `UpdateTodoRequestValidator` does not, because existing todos can be overdue.
 - **Enums** are serialized as strings via a global `JsonStringEnumConverter`, but the converter still accepts integers, so every enum field needs `ValidEnum()` to reject undefined values like `99`. Sorting by priority/status uses enum declaration order — reordering members changes sort results.
 - **Title trimming**: the controller stores `request.Title.Trim()`, so `ValidTitle` measures the *trimmed* length. Keep the two in sync.
-- **Length limits are duplicated**: `TodoRules.TitleMaxLength`/`DescriptionMaxLength` (200/2000) and `HasMaxLength(200)`/`HasMaxLength(2000)` in `TodoDbContext`. Change both together.
-- **Status changes** all go through `TodosController.SetStatus`, which sets/clears `CompletedAt` when entering/leaving `Done` and stamps `UpdatedAt`. Route any new status-mutating code through it.
-- **Time**: use the injected `TimeProvider` (registered as `TimeProvider.System`), never `DateTime.UtcNow` — in the controller, `SeedData`, and validators (`CreateTodoRequestValidator` takes it via constructor).
-- **Exception mapping** (`GlobalExceptionHandler`): `KeyNotFoundException`→404, `DbUpdateConcurrencyException`/`DbUpdateException`→409, client abort→499, everything else→500. Stack traces go into `detail` only in Development. `InvalidOperationException`/`ArgumentException` are deliberately **not** mapped to 400, since the framework throws them for server-side bugs. The controller currently returns `NotFound()` itself rather than throwing; the mappings exist for a future service layer.
+- **Length limits** have one source: `TodoRules.TitleMaxLength`/`DescriptionMaxLength`, used by both validators and `TodoDbContext`.
+- **Status changes** all go through `TodosController.SetStatus`, which sets/clears `CompletedAt` when entering/leaving `Done` and stamps `UpdatedAt`.
+- **Time**: use the injected `TimeProvider` (registered as `TimeProvider.System`), never `DateTime.UtcNow` — in the controller, `SeedData`, and validators.
+- **Exception mapping** (`GlobalExceptionHandler`): `BadHttpRequestException`→its own status (413 for oversized bodies), `KeyNotFoundException`→404, `DbUpdateConcurrencyException`→412, `DbUpdateException`→409, client abort→499, everything else→500. Stack traces go into `detail` only in Development. `InvalidOperationException`/`ArgumentException` are deliberately **not** mapped to 400, since the framework throws them for server-side bugs.
+
+### Production configuration
+
+- `AllowedHosts` is `localhost` in `appsettings.json`; set the real domain(s) per environment or every request gets 400.
+- `Cors:AllowedOrigins` is empty by default; list front-end origins explicitly. Never `AllowAnyOrigin`.
+- Tune `RateLimiting:*` via config/env (e.g. `RateLimiting__PermitLimit=5` for testing). Behind a reverse proxy, add `UseForwardedHeaders` or every client shares the proxy's IP bucket.
+- Bearer tokens are protected with Data Protection keys; with multiple instances or containers, persist the key ring to shared storage or tokens break across instances/restarts.
+- Identity's email sender is the default no-op, so confirmation/password-reset emails are not actually sent until an `IEmailSender<AppUser>` is registered.

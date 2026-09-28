@@ -47,6 +47,27 @@ public class UpdateTodoRequestValidator : AbstractValidator<UpdateTodoRequest>
     }
 }
 
+public class TodoListQueryValidator : AbstractValidator<TodoListQuery>
+{
+    public const int DefaultPageSize = 20;
+    public const int MaxPageSize = 100;
+    public const int SearchMaxLength = 100;
+    public static readonly string[] SortFields = ["createdat", "priority", "status", "duedate"];
+
+    public TodoListQueryValidator()
+    {
+        RuleFor(x => x.Status!.Value).ValidEnum().OverridePropertyName("Status").When(x => x.Status.HasValue);
+        RuleFor(x => x.Priority!.Value).ValidEnum().OverridePropertyName("Priority").When(x => x.Priority.HasValue);
+        RuleFor(x => x.Search).MaximumLength(SearchMaxLength);
+        RuleFor(x => x.SortBy)
+            .Must(s => SortFields.Contains(s!.ToLowerInvariant()))
+            .When(x => x.SortBy is not null)
+            .WithMessage($"SortBy must be one of: {string.Join(", ", SortFields)}.");
+        RuleFor(x => x.Page).GreaterThanOrEqualTo(1);
+        RuleFor(x => x.PageSize).InclusiveBetween(1, MaxPageSize);
+    }
+}
+
 public class UpdateStatusRequestValidator : AbstractValidator<UpdateStatusRequest>
 {
     public UpdateStatusRequestValidator() => RuleFor(x => x.Status).ValidEnum();

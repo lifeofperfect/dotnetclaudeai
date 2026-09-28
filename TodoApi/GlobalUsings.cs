@@ -1,11 +1,17 @@
 global using System.Diagnostics;
+global using System.Security.Claims;
 global using System.Text.Json.Serialization;
+global using System.Threading.RateLimiting;
 global using FluentValidation;
 global using Microsoft.AspNetCore.Diagnostics;
+global using Microsoft.AspNetCore.Identity;
+global using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 global using Microsoft.AspNetCore.Mvc;
 global using Microsoft.AspNetCore.Mvc.Filters;
+global using Microsoft.AspNetCore.RateLimiting;
 global using Microsoft.EntityFrameworkCore;
 global using Microsoft.Extensions.Options;
+global using Microsoft.Net.Http.Headers;
 global using TodoApi.Data;
 global using TodoApi.Dtos;
 global using TodoApi.Infrastructure;
